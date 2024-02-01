@@ -1,0 +1,29 @@
+# system folders/files
+.*
+
+# folders
+__pycache__
+cloud_formation
+bin
+venv
+dist
+docs
+env
+logs
+src/node_modules
+web/media
+web/static/CACHE
+stats
+
+# files
+*.yaml
+*.toml
+*.pyc
+*.pyo
+*.mo
+*.db
+*.css.map
+*.egg-info
+*.sql.gz
+*.log
+Dockerfile
