@@ -140,5 +140,5 @@ cython_debug/
 # Text Editor
 .vscode
 
-# Project server
-devserver.py
+# DB data
+db/data

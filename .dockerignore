@@ -14,6 +14,7 @@ src/node_modules
 web/media
 web/static/CACHE
 stats
+db
 
 # files
 *.yaml

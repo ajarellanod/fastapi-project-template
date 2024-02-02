@@ -1,22 +1,25 @@
-from typing import Literal, Protocol, TypeVar
+from typing import Literal, TypeVar
 from uuid import UUID
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import asc, desc, func, inspect, select
-from sqlalchemy.orm import selectinload
-from sqlalchemy.sql.selectable import Select
-import exceptions
-from sqlalchemy.exc import IntegrityError
+
 from asyncpg.exceptions import ForeignKeyViolationError, UniqueViolationError
 from pydantic import BaseModel
+from sqlalchemy import asc, desc, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+from sqlalchemy.sql.selectable import Select
 
+from project.database import Base
 
-Model = TypeVar("Model")
+from . import exceptions
+
+Model = TypeVar("Model", bound=Base)
 
 
 class GenericManager:
     author_field_name: str = "created_by"
 
-    def ___init__(self, model: Model, verbose_name: str | None):
+    def __init__(self, model: Model, verbose_name: str | None = None):
         self.model = model
         self.verbose_name = verbose_name or self.model.__name__
 
@@ -59,9 +62,7 @@ class GenericManager:
         """
         for key, value in kwargs.items():
             if key.endswith("__in"):
-                query = query.filter(
-                    getattr(self.model, key.replace("__in", "")).in_(value)
-                )
+                query = query.filter(getattr(self.model, key.replace("__in", "")).in_(value))
             else:
                 query = query.where(getattr(self.model, key) == value)
 
@@ -82,9 +83,7 @@ class GenericManager:
         skip = (page - 1) * limit
         return query.offset(skip).limit(limit)
 
-    def _order_by(
-        self, query: Select, fields: str | list[str], mode: str = "desc"
-    ) -> Select:
+    def _order_by(self, query: Select, fields: str | list[str], mode: str = "desc") -> Select:
         """
         Modify an SQLAlchemy query to include sorting by one or more fields in ascending or descending order.
 
@@ -112,9 +111,7 @@ class GenericManager:
 
         return query
 
-    async def _get_all_scalars(
-        self, db: AsyncSession, query: Select | None = None
-    ) -> list[Model]:
+    async def _get_all_scalars(self, db: AsyncSession, query: Select | None = None) -> list[Model]:
         """
         Retrieve a list of instances from the database.
 
@@ -125,7 +122,7 @@ class GenericManager:
         Returns:
             list[Model]: A list of instances retrieved from the database.
         """
-        query = self.select() if query is None else query
+        query = self._select() if query is None else query
         response = await db.scalars(query)
         result = response.all()
 
@@ -148,7 +145,7 @@ class GenericManager:
             NoResultFound: If `raise_error` is True and no instance is found.
         """
         response = await db.execute(query)
-        instance = response.scalars().first()
+        instance: Model = response.scalars().first()
 
         if raise_error is True and instance is None:
             raise exceptions.NotFound
@@ -168,18 +165,19 @@ class GenericManager:
         instance: Model,
         load: list[str] = [],
         action: Literal["commit", "flush"] = "commit",
-    ) -> Model | None:
+    ) -> Model:
         """
         Save or flush changes to the database and handle exceptions gracefully.
         """
         try:
             await (db.flush() if action == "flush" else db.commit())
             if instance:
-                await db.refresh(instance, attribute_names=list(load))
+                await db.refresh(instance, attribute_names=load)
             return instance
         except IntegrityError as error:
             await db.rollback()
             self._handle_db_errors(error)
+            return instance
 
     def _reset(self):
         """
@@ -194,7 +192,7 @@ class GenericManager:
         select: list[str] = ["*"],
         load: list[str] = [],
         **kwargs,
-    ) -> Model:
+    ) -> "GenericManager":
         """
         Initialize query construction with specified fields, load relationships, and filters.
         """
@@ -202,7 +200,7 @@ class GenericManager:
         self._query = self._filter(self._select(select, load), **kwargs)
         return self
 
-    def paginate(self, page: int = 1, limit: int = 100) -> Model:
+    def paginate(self, page: int = 1, limit: int = 100) -> "GenericManager":
         """
         Apply pagination to the query.
         """
@@ -210,7 +208,7 @@ class GenericManager:
             self._query = self._paginate(self._query, page=page, limit=limit)
         return self
 
-    def order_by(self, fields: str | list[str], mode: str = "desc") -> Model:
+    def order_by(self, fields: str | list[str], mode: str = "desc") -> "GenericManager":
         """
         Apply ordering to the query.
         """
@@ -218,14 +216,12 @@ class GenericManager:
             self._query = self._order_by(self._query, fields, mode)
         return self
 
-    async def one(self, raise_error: bool = True) -> Model:
+    async def one(self, raise_error: bool = True) -> Model | None:
         """
         Execute the query and return a single result.
         """
         if self._db is not None and self._query is not None:
-            result = await self._get_scalar(
-                self._db, self._query, raise_error=raise_error
-            )
+            result: Model = await self._get_scalar(self._db, self._query, raise_error=raise_error)  # type: ignore
             self._reset()
             return result
         return None
@@ -235,7 +231,7 @@ class GenericManager:
         Execute the query and return all results.
         """
         if self._db is not None and self._query is not None:
-            result = await self._get_all_scalars(self._db, self._query)
+            result: list[Model] = await self._get_all_scalars(self._db, self._query)
             self._reset()
             return result
         return []
@@ -257,7 +253,7 @@ class GenericManager:
 
         Args:
             db (AsyncSession): The asynchronous database session to use for database operations.
-            schema (BaseModel | None): A Pydantic schema representing the data for creating the instance. 
+            schema (BaseModel | None): A Pydantic schema representing the data for creating the instance.
             load (list[str]): A list of relationship attributes to load eagerly. Defaults to an empty list.
             exclude (list[str]): A list of fields to exclude when creating the instance from the schema.
             user (UUID | None): The UUID of the user who is creating this instance, used for setting the 'created_by' field.
@@ -274,9 +270,7 @@ class GenericManager:
         """
 
         if schema:
-            instance = self.model(
-                **schema.model_dump(exclude_unset=True, exclude=exclude)
-            )
+            instance = self.model(**schema.model_dump(exclude_unset=True, exclude=exclude))
         else:
             instance = self.model()
 
@@ -308,29 +302,26 @@ class GenericManager:
         Args:
             db (AsyncSession): The asynchronous database session used for executing the update operation.
             instance (Model): The existing model instance in the database to be updated.
-            schema (BaseModel): A Pydantic schema containing the data to be used for updating the instance. 
+            schema (BaseModel): A Pydantic schema containing the data to be used for updating the instance.
                                 The schema should reflect the structure of the model being updated.
             load (list[str]): A list of relationship attributes of the instance to load eagerly.
             exclude (list[str]): A list of fields to be excluded from the update operation.
-            action (Literal["commit", "flush"]): Specifies the database transaction action to take after the update. 
+            action (Literal["commit", "flush"]): Specifies the database transaction action to take after the update.
             save (bool): Determines whether to save the changes to the database immediately.
 
         Returns:
-            Model: The updated model instance, reflecting the changes made. 
+            Model: The updated model instance, reflecting the changes made.
                    The instance is either immediately persisted or pending persistence based on the 'save' argument.
 
         Raises:
             Exception: Any exceptions raised during the update operation are propagated for handling by the caller.
         """
 
-        for field, value in schema.model_dump(
-            exclude_unset=True, exclude=exclude
-        ).items():
+        for field, value in schema.model_dump(exclude_unset=True, exclude=exclude).items():
             setattr(instance, field, value)
 
         # Saving or not
         return await self.save(db, instance, load, action) if save else instance
-
 
     async def delete(
         self,
@@ -346,11 +337,11 @@ class GenericManager:
             instance (Model): The database instance to be deleted.
 
         Returns:
-            Type[BaseModel]: The deleted instance.
+            Model: The deleted instance.
 
         Raises:
             Exception: Any exceptions raised during the database deletion operation.
         """
         await db.delete(instance)
-        await self.save(db, instance, action=action)
+        await self.save(db, None, action=action)
         return instance

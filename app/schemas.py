@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict
 class ExampleBase(BaseModel):
     """The foundational schema providing basic info"""
 
+    id: int
     code: str
     value: str
 
@@ -22,6 +23,7 @@ class ExampleCreate(BaseModel):
     """Schema guiding the construction of new resources"""
 
     code: str
+    value: str
 
 
 # Focused schema facilitating alterations to established resources

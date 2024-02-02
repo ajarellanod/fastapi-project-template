@@ -13,7 +13,7 @@ services:
     depends_on:
       - db
     networks:
-      - rubid
+      - project
   db:
     image: postgres:15.3
     container_name: project-db
@@ -32,4 +32,3 @@ volumes:
 networks:
   project:
     name: project_network
-    external: true

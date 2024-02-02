@@ -2,15 +2,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
+from app.api.routes.v1 import router as v1_router
 from project.core.config import settings
-
-from app.api.v1 import router as v1_router
 
 
 def get_application():
     _app = FastAPI(
         title=settings.PROJECT_NAME,
-        root_path=settings.root_path,
         default_response_class=ORJSONResponse,
     )
 
