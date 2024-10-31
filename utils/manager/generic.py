@@ -62,7 +62,9 @@ class GenericManager:
         """
         for key, value in kwargs.items():
             if key.endswith("__in"):
-                query = query.filter(getattr(self.model, key.replace("__in", "")).in_(value))
+                query = query.filter(
+                    getattr(self.model, key.replace("__in", "")).in_(value)
+                )
             else:
                 query = query.where(getattr(self.model, key) == value)
 
@@ -83,7 +85,9 @@ class GenericManager:
         skip = (page - 1) * limit
         return query.offset(skip).limit(limit)
 
-    def _order_by(self, query: Select, fields: str | list[str], mode: str = "desc") -> Select:
+    def _order_by(
+        self, query: Select, fields: str | list[str], mode: str = "desc"
+    ) -> Select:
         """
         Modify an SQLAlchemy query to include sorting by one or more fields in ascending or descending order.
 
@@ -111,7 +115,9 @@ class GenericManager:
 
         return query
 
-    async def _get_all_scalars(self, db: AsyncSession, query: Select | None = None) -> list[Model]:
+    async def _get_all_scalars(
+        self, db: AsyncSession, query: Select | None = None
+    ) -> list[Model]:
         """
         Retrieve a list of instances from the database.
 
@@ -124,7 +130,7 @@ class GenericManager:
         """
         query = self._select() if query is None else query
         response = await db.scalars(query)
-        result = response.all()
+        result = response.unique().all()
 
         return result
 
@@ -154,7 +160,7 @@ class GenericManager:
 
     def _handle_db_errors(self, error: IntegrityError):
         if isinstance(error.orig.__cause__, UniqueViolationError):
-            raise exceptions.AlreadyExists
+            raise exceptions.AlreadyExist
         if isinstance(error.orig.__cause__, ForeignKeyViolationError):
             raise exceptions.NoReference
         raise
@@ -221,7 +227,9 @@ class GenericManager:
         Execute the query and return a single result.
         """
         if self._db is not None and self._query is not None:
-            result: Model = await self._get_scalar(self._db, self._query, raise_error=raise_error)  # type: ignore
+            result: Model = await self._get_scalar(
+                self._db, self._query, raise_error=raise_error
+            )  # type: ignore
             self._reset()
             return result
         return None
@@ -239,7 +247,7 @@ class GenericManager:
     async def create(
         self,
         db: AsyncSession,
-        schema: BaseModel | None = None,
+        schema: BaseModel | dict | None = None,
         load: list[str] = [],
         exclude: list[str] = [],
         user: UUID | None = None,
@@ -253,7 +261,7 @@ class GenericManager:
 
         Args:
             db (AsyncSession): The asynchronous database session to use for database operations.
-            schema (BaseModel | None): A Pydantic schema representing the data for creating the instance.
+            schema (BaseModel | dict | None): A Pydantic schema representing the data for creating the instance.
             load (list[str]): A list of relationship attributes to load eagerly. Defaults to an empty list.
             exclude (list[str]): A list of fields to exclude when creating the instance from the schema.
             user (UUID | None): The UUID of the user who is creating this instance, used for setting the 'created_by' field.
@@ -269,8 +277,12 @@ class GenericManager:
             Exception: Raised for any other exceptions encountered during the database operation.
         """
 
-        if schema:
-            instance = self.model(**schema.model_dump(exclude_unset=True, exclude=exclude))
+        if isinstance(schema, BaseModel):
+            instance = self.model(
+                **schema.model_dump(exclude_unset=True, exclude=exclude)
+            )
+        elif isinstance(schema, dict):
+            instance = self.model(**schema)
         else:
             instance = self.model()
 
@@ -288,7 +300,7 @@ class GenericManager:
         self,
         db: AsyncSession,
         instance: Model,
-        schema: BaseModel,
+        schema: BaseModel | dict,
         load: list[str] = [],
         exclude: list[str] = [],
         action: Literal["commit", "flush"] = "commit",
@@ -302,7 +314,7 @@ class GenericManager:
         Args:
             db (AsyncSession): The asynchronous database session used for executing the update operation.
             instance (Model): The existing model instance in the database to be updated.
-            schema (BaseModel): A Pydantic schema containing the data to be used for updating the instance.
+            schema (BaseModel | dict): A Pydantic schema containing the data to be used for updating the instance.
                                 The schema should reflect the structure of the model being updated.
             load (list[str]): A list of relationship attributes of the instance to load eagerly.
             exclude (list[str]): A list of fields to be excluded from the update operation.
@@ -316,9 +328,16 @@ class GenericManager:
         Raises:
             Exception: Any exceptions raised during the update operation are propagated for handling by the caller.
         """
-
-        for field, value in schema.model_dump(exclude_unset=True, exclude=exclude).items():
-            setattr(instance, field, value)
+        if isinstance(schema, BaseModel):
+            for field, value in schema.model_dump(
+                exclude_unset=True, exclude=exclude
+            ).items():
+                setattr(instance, field, value)
+        elif isinstance(schema, dict):
+            for field, value in schema.items():
+                if field in exclude or value is None:
+                    continue
+                setattr(instance, field, value)
 
         # Saving or not
         return await self.save(db, instance, load, action) if save else instance
@@ -328,6 +347,7 @@ class GenericManager:
         db: AsyncSession,
         instance: Model,
         action: Literal["commit", "flush"] = "commit",
+        save: bool = True,
     ) -> Model:
         """
         Delete an existing database instance.
@@ -343,5 +363,7 @@ class GenericManager:
             Exception: Any exceptions raised during the database deletion operation.
         """
         await db.delete(instance)
-        await self.save(db, None, action=action)
+        # Saving or not
+        if save:
+            await (db.flush() if action == "flush" else db.commit())
         return instance
